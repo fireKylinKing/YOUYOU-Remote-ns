@@ -619,7 +619,14 @@ int main(int, char **) {
                 if(uu::display::vsync(renderer,requestedVsync?1:0)==0) actualVsync=requestedVsync;
                 uu::diagnostic(actualVsync?"display-vsync-on":"display-vsync-off");
 #ifdef __SWITCH__
-                uu::SwitchRumble rumble(client.rumbleInbox());
+                const auto &rumbleConfig=uu::ConfigStore::instance();
+                uu::RumbleOptions rumbleOptions;
+                rumbleOptions.strength=rumbleConfig.integer("rumble_strength",75,0,100);
+                rumbleOptions.lowGain=rumbleConfig.integer("rumble_low_gain",100,0,100);
+                rumbleOptions.highGain=rumbleConfig.integer("rumble_high_gain",80,0,100);
+                rumbleOptions.smoothMs=rumbleConfig.integer("rumble_smooth_ms",20,0,100);
+                rumbleOptions.trace=rumbleConfig.integer("rumble_trace",1,0,1)!=0;
+                uu::SwitchRumble rumble(client.rumbleInbox(),rumbleOptions);
                 FocusHook focusHook(client,rumble);
                 const bool rumbleEnabled=uu::ConfigStore::instance().integer("rumble",1,0,1)!=0;
 #endif

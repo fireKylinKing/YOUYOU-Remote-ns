@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <cmath>
 using namespace uu;
 void check(bool ok,const char *message) {if(!ok)throw std::runtime_error(message);}
 std::optional<RumbleValue> parse(const std::string &s) {
@@ -10,6 +11,41 @@ std::optional<RumbleValue> parse(const std::string &s) {
 }
 int main() {
     try {
+        RumbleShaper shaper;
+        auto amplitude=shaper.advance({255,255},5);
+        check(std::abs(amplitude.low-.25f)<.0001f && std::abs(amplitude.high-.25f)<.0001f,"bounded attack");
+        amplitude=shaper.advance({255,255},15);
+        check(std::abs(amplitude.low-.75f)<.0001f && std::abs(amplitude.high-.6f)<.0001f,"comfort gains");
+        amplitude=shaper.advance({128,255},1);
+        check(std::abs(amplitude.low-.7f)<.0001f,"nonzero transition slew");
+        amplitude=shaper.advance({0,255},0);
+        check(amplitude.low==0 && std::abs(amplitude.high-.6f)<.0001f,"per-channel zero bypasses smoothing");
+        amplitude=shaper.advance({},0);
+        check(amplitude.low==0 && amplitude.high==0,"zero stop has no tail");
+        RumbleShaper original({100,100,100,0,false});
+        amplitude=original.advance({255,128},0);
+        check(amplitude.low==1 && std::abs(amplitude.high-128.f/255)<.0001f,"original mapping configurable");
+        RumbleShaper clamped({500,-10,500,-1,false});
+        amplitude=clamped.advance({255,255},5);
+        check(amplitude.low==0 && amplitude.high==1,"options bounds");
+        shaper.advance({255,255},100);shaper.reset();
+        amplitude=shaper.advance({255,255},0);
+        check(amplitude.low==0 && amplitude.high==0,"reset cannot replay amplitude");
+        RumbleInbox traced;traced.connect(8);traced.setTracing(true);traced.heartbeat(true,100);
+        traced.receive(8,{7,9},101);traced.receive(8,{},109);
+        traced.sample(109);traced.receive(8,{11,13},111);
+        check(!traced.receive(7,{255,255},112),"trace rejects stale session");
+        auto trace=traced.takeTrace();
+        check(trace.feedback.size()==3 && trace.dropped==0,"all received values traced");
+        check(trace.feedback[0].interval==0 && trace.feedback[1].interval==8 && trace.feedback[2].interval==2,"receive intervals");
+        check(!trace.feedback[0].replacedPending && trace.feedback[1].replacedPending && !trace.feedback[2].replacedPending,"short pulse overwrite observable");
+        check(trace.feedback[1].value==RumbleValue{},"zero feedback traced");
+        check(traced.takeTrace().feedback.empty(),"trace drain");
+        for(int i=0;i<1000;++i)traced.receive(8,{uint8_t(i%256),42},120);
+        traced.disable();trace=traced.takeTrace();
+        check(trace.feedback.size()==512 && trace.dropped==488 && trace.feedback.back().sequence==1003,"bounded trace and explicit drops");
+        traced.setTracing(false);traced.heartbeat(true,130);traced.receive(8,{1,2},131);
+        check(traced.takeTrace().feedback.empty(),"trace off");
         const std::string valid=R"({"action":"gpd_vibration","index":0,"left_motor":255,"right_motor":90})";
         auto v=parse(valid);check(v && *v==RumbleValue{255,90},"wire values");
         check(parse(R"({"right_motor":0,"left_motor":0,"index":0,"action":"gpd_vibration"})")->low==0,"zero/order");

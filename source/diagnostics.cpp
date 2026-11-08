@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <atomic>
 #ifdef __SWITCH__
 #include <switch.h>
 #include <unwind.h>
@@ -29,6 +30,11 @@ const char *diagnosticPath() noexcept {
 }
 namespace {
 class AsyncLog {
+    const std::string path_;
+    const size_t rotateBytes_;
+    const bool allowDirect_;
+    std::atomic<uint64_t> droppedCount_{0};
+    uint64_t reportedDrops_=0;
     struct Entry {
         uint64_t sequence = 0;
         std::string line;
@@ -44,11 +50,10 @@ class AsyncLog {
     std::mutex degradedWriteMutex_;
     std::thread worker_;
     static constexpr size_t kMaxQueued = 512;
-    static constexpr size_t kRotateBytes = 128 * 1024;
 
     bool writeBatch(const std::deque<Entry> &batch) noexcept {
         try {
-            const std::string path = diagnosticPath();
+            const std::string &path = path_;
             size_t size = 0;
             if (FILE *probe = std::fopen(path.c_str(), "rb")) {
                 if (std::fseek(probe, 0, SEEK_END) == 0) {
@@ -57,7 +62,7 @@ class AsyncLog {
                 }
                 std::fclose(probe);
             }
-            if (size > kRotateBytes) {
+            if (size > rotateBytes_) {
                 // Fixed rotation: current -> .1 -> .2. Each new file starts
                 // with the app-start build label so three rotations still
                 // identify the running build.
@@ -79,6 +84,11 @@ class AsyncLog {
                 if (std::fwrite(text.data(), 1, text.size(), file) != text.size()) ok = false;
             };
             if (size == 0) writeText(std::string("# build=") + UU_VERSION + "\n");
+            const auto drops=droppedCount_.load();
+            if(drops!=reportedDrops_) {
+                writeText("# dropped_entries_total="+std::to_string(drops)+"\n");
+                reportedDrops_=drops;
+            }
             for (const auto &entry : batch) writeText(entry.line + "\n");
             if (std::fflush(file) != 0) ok = false;
             if (std::fclose(file) != 0) ok = false;
@@ -110,7 +120,8 @@ class AsyncLog {
         }
     }
   public:
-    AsyncLog() {
+    explicit AsyncLog(const char *path=diagnosticPath(),size_t rotateBytes=128*1024,bool allowDirect=true):
+        path_(path),rotateBytes_(rotateBytes),allowDirect_(allowDirect) {
         try {
             worker_ = std::thread([this] { run(); });
         } catch (...) {
@@ -131,6 +142,9 @@ class AsyncLog {
         try {
             // Set only during construction, before the logger is published.
             const bool direct = degraded_;
+            if(direct && !allowDirect_) {
+                std::lock_guard lock(mutex_);failed_=true;return;
+            }
             if (direct) {
                 // Serialize the sequence assignment with the synchronous write:
                 // seq N+1 cannot complete before seq N.
@@ -161,6 +175,7 @@ class AsyncLog {
                 queue_.back().sequence = sequence;
                 if (queue_.size() > kMaxQueued) {
                     queue_.pop_front();
+                    ++droppedCount_;
                     dropped_ = true;
                 }
                 cv_.notify_one();
@@ -196,9 +211,17 @@ AsyncLog &asyncLog() {
     static AsyncLog instance;
     return instance;
 }
+AsyncLog &rumbleLog() {
+#ifdef __SWITCH__
+    static AsyncLog instance("sdmc:/switch/UURemote-ns/rumble.log",1024*1024,false);
+#else
+    static AsyncLog instance("rumble.log",1024*1024,false);
+#endif
+    return instance;
+}
 } // namespace
 void diagnostic(const char *event) noexcept {
-    // Fixed names, numeric error codes and code offsets only; never log protocol data.
+    // Fixed names, numeric error codes and code offsets only.
     try {
         if (!event) return;
         std::string line = std::to_string(static_cast<long long>(std::time(nullptr)));
@@ -207,6 +230,14 @@ void diagnostic(const char *event) noexcept {
         asyncLog().push(std::move(line));
     } catch (...) {
     }
+}
+void rumbleDiagnostic(const char *event) noexcept {
+    try {
+        if(event)rumbleLog().push(std::to_string(static_cast<long long>(std::time(nullptr)))+" "+event);
+    } catch (...) {}
+}
+bool flushRumbleLog() noexcept {
+    try { return rumbleLog().flush(); } catch (...) { return false; }
 }
 bool flushDiagnosticsLog() noexcept {
     try {

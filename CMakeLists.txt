@@ -108,7 +108,7 @@ if(UU_CORE_ONLY)
     target_link_options(diagnostics_log_test PRIVATE -Wl,--wrap=fopen -Wl,--wrap=fflush
                         -Wl,--wrap=fclose -Wl,--wrap=fwrite)
     add_test(NAME diagnostics_log COMMAND diagnostics_log_test)
-    foreach(mode fflush open write close drop failslow)
+    foreach(mode fflush open write close drop failslow rumble)
         add_test(NAME diagnostics_log_${mode} COMMAND diagnostics_log_test ${mode})
     endforeach()
     add_executable(present_identity_test tests/present_identity_test.cpp)

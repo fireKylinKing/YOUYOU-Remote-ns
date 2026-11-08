@@ -39,7 +39,13 @@ constexpr const char *kFallbackTemplate =
     "playout_delay_ms=8\n"
     "max_bitrate_mbps=0\n"
     "video_codec=hevc\n"
-    "native_display=1\n";
+    "native_display=1\n"
+    "rumble=1\n"
+    "rumble_strength=75\n"
+    "rumble_low_gain=100\n"
+    "rumble_high_gain=80\n"
+    "rumble_smooth_ms=20\n"
+    "rumble_trace=1\n";
 
 std::string readFile(const std::string &path) {
     std::ifstream file(path, std::ios::binary);

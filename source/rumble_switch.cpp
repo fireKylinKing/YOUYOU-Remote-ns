@@ -2,13 +2,17 @@
 #ifdef __SWITCH__
 #include "diagnostics.hpp"
 #include <chrono>
+#include <cstdio>
 
 namespace uu {
-SwitchRumble::SwitchRumble(std::shared_ptr<RumbleInbox> inbox):inbox_(std::move(inbox)) {
+SwitchRumble::SwitchRumble(std::shared_ptr<RumbleInbox> inbox,RumbleOptions options):
+    inbox_(std::move(inbox)),options_(options) {
+    inbox_->setTracing(options_.trace);
     worker_=std::thread([this]{run();});
 }
 SwitchRumble::~SwitchRumble() {
     stop();quit_=true;worker_.join();
+    if(options_.trace)flushRumbleLog();
 }
 void SwitchRumble::stop() {
     std::lock_guard lock(mutex_);
@@ -37,36 +41,53 @@ void SwitchRumble::run() {
     uint32_t activeId=0,activeStyle=0;
     int count=0;
     bool ready=false,applied=false;
-    RumbleValue previous{};
+    RumbleAmplitude previous{};
+    RumbleShaper shaper(options_);
+    uint64_t previousAt=rumbleNow(),activeEpoch=0;
     unsigned previousSides=0;
-    auto send=[&](RumbleValue value,unsigned sides) {
+    if(options_.trace) {
+        char line[192];
+        std::snprintf(line,sizeof(line),"rumble-config strength_pct=%d low_pct=%d high_pct=%d smooth_ms=%d tick_ms=5",
+            options_.strength,options_.lowGain,options_.highGain,options_.smoothMs);
+        rumbleDiagnostic(line);
+    }
+    auto send=[&](RumbleAmplitude value,unsigned sides) {
         HidVibrationValue values[2]{};
         for(int i=0;i<count;++i) {
             values[i].freq_low=160.f;values[i].freq_high=320.f;
             if(sides & (1u<<i)) {
-                values[i].amp_low=float(value.low)/255.f;
-                values[i].amp_high=float(value.high)/255.f;
+                values[i].amp_low=value.low;
+                values[i].amp_high=value.high;
             }
         }
         return hidSendVibrationValues(handles,values,count);
     };
-    auto stopOutput=[&] {
+    auto stopOutput=[&](const char *reason) {
         if(ready && applied) {
             // Try each handle even if a paired send failed during hot-unplug.
             HidVibrationValue zero{};zero.freq_low=160.f;zero.freq_high=320.f;
             for(int i=0;i<count;++i)hidSendVibrationValue(handles[i],&zero);
+            if(options_.trace) {
+                char line[192];
+                std::snprintf(line,sizeof(line),"rumble-stop-attempt t_ms=%llu out_low=0 out_high=0 reason=%s",
+                    static_cast<unsigned long long>(rumbleNow()),reason);
+                rumbleDiagnostic(line);
+            }
         }
-        applied=false;previous={};previousSides=0;
+        applied=false;previous={};previousSides=0;shaper.reset();
     };
     while(!quit_) {
+        char outputLine[256]{};
         {
             // Serializes activation, local tests and output with stop().
             std::lock_guard lock(mutex_);
             const auto now=rumbleNow();
+            const auto elapsedMs=now-previousAt;previousAt=now;
             if(now-updatedAt_>500) {testAt_=0;inbox_->disable();}
             auto sample=inbox_->sample(now);
+            if(sample.epoch!=activeEpoch) {shaper.reset();activeEpoch=sample.epoch;}
             if(activeId!=id_ || activeStyle!=style_) {
-                stopOutput();ready=false;activeId=id_;activeStyle=style_;
+                stopOutput("route");ready=false;activeId=id_;activeStyle=style_;
                 count=(style_==HidNpadStyleTag_NpadJoyLeft || style_==HidNpadStyleTag_NpadJoyRight)?1:2;
                 if(style_) {
                     ready=R_SUCCEEDED(hidInitializeVibrationDevices(handles,count,HidNpadIdType(id_),HidNpadStyleTag(style_)));
@@ -75,29 +96,58 @@ void SwitchRumble::run() {
             }
             RumbleValue desired=sample.enabled?sample.value:RumbleValue{};
             unsigned sides=3;
+            bool localTest=false;
             if(testAt_) {
                 const auto elapsed=now-testAt_;
                 if(sample.epoch!=testEpoch_ || elapsed>=1100) {testAt_=0;desired={};}
                 else if(elapsed<350) {desired={96,96};sides=1;}
                 else if(elapsed>=600 && elapsed<950) {desired={96,96};sides=count==1?1:2;}
                 else desired={};
+                localTest=testAt_!=0;
             }
-            if(ready && (desired!=previous || sides!=previousSides)) {
+            RumbleAmplitude amplitude;
+            if(localTest) {
+                shaper.reset();amplitude={float(desired.low)/255.f,float(desired.high)/255.f};
+            } else amplitude=shaper.advance(desired,elapsedMs);
+            if(ready && (amplitude.low!=previous.low || amplitude.high!=previous.high || sides!=previousSides)) {
                 // Set before sending so failure cleanup also attempts stop.
                 applied=true;
-                if(R_FAILED(send(desired,sides))) {
-                    stopOutput();ready=false;inbox_->disable();
+                if(R_FAILED(send(amplitude,sides))) {
+                    stopOutput("send-failed");ready=false;inbox_->disable();
                     diagnostic("rumble-output-failed");
                 } else {
-                    if(desired!=RumbleValue{} && previous==RumbleValue{})diagnostic("rumble-output-applied");
-                    previous=desired;previousSides=sides;
+                    if(desired!=RumbleValue{} && previous.low==0 && previous.high==0)diagnostic("rumble-output-applied");
+                    previous=amplitude;previousSides=sides;
                     applied=desired!=RumbleValue{};
+                    if(options_.trace)std::snprintf(outputLine,sizeof(outputLine),
+                        "rumble-out t_ms=%llu raw_low=%u raw_high=%u out_low=%.4f out_high=%.4f sides=%u mode=%s",
+                        static_cast<unsigned long long>(now),unsigned(desired.low),unsigned(desired.high),
+                        double(amplitude.low),double(amplitude.high),sides,localTest?"test":"remote");
                 }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // The callback only appends numeric records to a fixed ring. Formatting
+        // and bounded async logging happen after HID output, outside its lock.
+        if(options_.trace) {
+            auto trace=inbox_->takeTrace();
+            char line[256];
+            if(trace.dropped) {
+                std::snprintf(line,sizeof(line),"rumble-rx-dropped count=%llu",static_cast<unsigned long long>(trace.dropped));
+                rumbleDiagnostic(line);
+            }
+            for(const auto &event:trace.feedback) {
+                std::snprintf(line,sizeof(line),
+                    "rumble-rx t_ms=%llu seq=%llu epoch=%llu low=%u high=%u dt_ms=%llu replaced=%d",
+                    static_cast<unsigned long long>(event.at),static_cast<unsigned long long>(event.sequence),
+                    static_cast<unsigned long long>(event.epoch),unsigned(event.value.low),unsigned(event.value.high),
+                    static_cast<unsigned long long>(event.interval),event.replacedPending?1:0);
+                rumbleDiagnostic(line);
+            }
+            if(outputLine[0])rumbleDiagnostic(outputLine);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    stopOutput();
+    stopOutput("shutdown");
 }
 } // namespace uu
 #endif

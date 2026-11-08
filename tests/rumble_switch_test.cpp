@@ -30,7 +30,11 @@ bool sawTestSide(bool right) {
     return false;
 }
 }
-namespace uu {void diagnostic(const char *) noexcept {}}
+namespace uu {
+void diagnostic(const char *) noexcept {}
+void rumbleDiagnostic(const char *) noexcept {}
+bool flushRumbleLog() noexcept {return true;}
+}
 u32 hidGetNpadStyleSet(HidNpadIdType){return style;}
 Result hidInitializeVibrationDevices(HidVibrationDeviceHandle *h,int n,HidNpadIdType id,HidNpadStyleTag) {
     initializedCount=n;
@@ -51,23 +55,23 @@ int main() {
         {
             SwitchRumble output(inbox);
             output.update(pad,true);inbox->receive(1,{255,128},rumbleNow());
-            waitFor([&]{return isLast(1.f,128.f/255);},"amplitude conversion");
+            waitFor([&]{return isLast(.75f,128.f/255*.6f);},"comfort amplitude conversion");
             inbox->receive(1,{},rumbleNow());waitFor([&]{return isLast(0,0);},"zero stop");
             output.update(pad,true);inbox->receive(1,{255,0},rumbleNow());
-            waitFor([&]{return isLast(1,0);},"nonzero before pause");
+            waitFor([&]{return isLast(.75f,0);},"nonzero before pause");
             output.stop();waitFor([&]{return isLast(0,0);},"focus/menu stop");
             output.update(pad,true);inbox->receive(1,{0,255},rumbleNow());
-            waitFor([&]{return isLast(0,1);},"high channel");
+            waitFor([&]{return isLast(0,.6f);},"high channel");
             // Deliberately stop renewing the UI lease; worker must stop itself.
             waitFor([&]{return isLast(0,0);},"UI stall watchdog");
             output.update(pad,true);check(inbox->sample(rumbleNow()).value==RumbleValue{},"stall resume replay");
             inbox->receive(1,{255,255},rumbleNow());
-            waitFor([&]{return isLast(1,1);},"pre-unplug output");
+            waitFor([&]{return isLast(.75f,.6f);},"pre-unplug output");
             pad.connected=false;output.update(pad,true);
             waitFor([&]{return isLast(0,0);},"unplug stop");
             pad.connected=true;pad.handheld=true;style=HidNpadStyleTag_NpadHandheld;
             output.update(pad,true);inbox->receive(1,{255,0},rumbleNow());
-            waitFor([&]{return isLast(1,0);},"handheld rediscovery");
+            waitFor([&]{return isLast(.75f,0);},"handheld rediscovery");
             output.update(pad,true);fail=true;inbox->receive(1,{128,128},rumbleNow());
             waitFor([&]{return isLast(0,0);},"output failure stop");
             const auto failedAttempts=attempts.load();fail=false;
@@ -81,7 +85,7 @@ int main() {
             check(isLast(0,0),"self-test completion stop");
             pad.handheld=false;style=HidNpadStyleTag_NpadJoyRight;
             output.update(pad,true);inbox->receive(1,{255,0},rumbleNow());
-            waitFor([&]{return isLast(1,0);},"single Joy-Con output");
+            waitFor([&]{return isLast(.75f,0);},"single Joy-Con output");
             check(initializedCount==1,"single Joy-Con handle count");
         }
         check(isLast(0,0),"destructor stop and join");

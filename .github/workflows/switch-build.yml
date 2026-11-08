@@ -41,7 +41,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake \
             -DCMAKE_BUILD_TYPE=Release -DUU_RESOURCE_MODE=FALLBACK \
             -DUU_DEKO3D_ROOT=/source/external/deko3d \
-            -DUU_BUILD_LABEL=0.3.74-rumble \
+            -DUU_BUILD_LABEL=0.3.75-rumble \
             -DUU_MEDIA_DISPATCH=ON -DUU_SRTP_MBEDTLS=ON \
             -DUU_RECOVERY_FOCUS=OFF -DUU_SWITCH_BATCH_RX=OFF \
             -DUU_RECEIVE_TIMESTAMPS=OFF -DUU_TWCC_FOUNDATION=OFF \
@@ -60,6 +60,11 @@ jobs:
           (cd dist/switch-build && find . -type f -print0 | sort -z | xargs -0 sha256sum) > dist/SHA256SUMS
           mv dist/SHA256SUMS dist/switch-build/
           BUILD
+      - name: Verify rumble shaping, lifecycle and asynchronous trace logging
+        run: |
+          cmake -S . -B build-core -G Ninja -DUU_CORE_ONLY=ON -DUU_BUILD_LABEL=0.3.75-rumble
+          cmake --build build-core --target rumble_test rumble_switch_test config_store_test diagnostics_log_test --parallel 4
+          ctest --test-dir build-core -R '^(gamepad_rumble.*|config_store|diagnostics_log.*)$' --output-on-failure
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: switch-build-inputs
