@@ -1,4 +1,5 @@
 #include "background.hpp"
+#include "rumble_switch.hpp"
 #include "refresh_pacer.hpp"
 #include "client.hpp"
 #include "config_store.hpp"
@@ -377,17 +378,20 @@ struct Controls {
 #ifdef __SWITCH__
 struct FocusHook {
     AppletHookCookie cookie{};
-    explicit FocusHook(uu::Client &client) {
+    uu::Client &client;
+    uu::SwitchRumble &rumble;
+    FocusHook(uu::Client &c,uu::SwitchRumble &r):client(c),rumble(r) {
         appletHook(
             &cookie,
             [](AppletHookType type, void *data) {
                 if ((type == AppletHookType_OnFocusState &&
                      appletGetFocusState() != AppletFocusState_InFocus) ||
                     type == AppletHookType_OnExitRequest) {
-                    static_cast<uu::Client *>(data)->command("release");
+                    auto &hook=*static_cast<FocusHook *>(data);
+                    hook.rumble.stop();hook.client.command("release");
                 }
             },
-            &client);
+            this);
     }
     ~FocusHook() {
         appletUnhook(&cookie);
@@ -615,10 +619,13 @@ int main(int, char **) {
                 if(uu::display::vsync(renderer,requestedVsync?1:0)==0) actualVsync=requestedVsync;
                 uu::diagnostic(actualVsync?"display-vsync-on":"display-vsync-off");
 #ifdef __SWITCH__
-                FocusHook focusHook(client);
+                uu::SwitchRumble rumble(client.rumbleInbox());
+                FocusHook focusHook(client,rumble);
+                const bool rumbleEnabled=uu::ConfigStore::instance().integer("rumble",1,0,1)!=0;
 #endif
                 bool running = true, overlay = false, wasStreaming = false,
                      statsVisible = false, persistentNetwork = false;
+                bool inputFocused=true;
                 int selected = 0, texW = 0, texH = 0;
                 unsigned lastVideoFormat = 0;
                 bool lastVideoHardware = false;
@@ -691,6 +698,9 @@ int main(int, char **) {
                     auto state = client.snapshot();
                     const auto mediaEpoch=media->generation();
                     if(mediaEpoch!=nativeOutputEpoch) {
+#ifdef __SWITCH__
+                        rumble.stop();
+#endif
                         // The media reset is the authoritative session boundary;
                         // a fast reconnect can skip an observed streaming=false.
                         nativeOutputEpoch=mediaEpoch;
@@ -725,6 +735,13 @@ int main(int, char **) {
                         if (event.type == SDL_QUIT)
                             running = false;
                         liveUi.event(event);
+                        if(event.type==SDL_WINDOWEVENT && event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)inputFocused=true;
+                        if(event.type==SDL_WINDOWEVENT && event.window.event==SDL_WINDOWEVENT_FOCUS_LOST) {
+                            inputFocused=false;
+#ifdef __SWITCH__
+                            rumble.stop();
+#endif
+                        }
                         if (event.type == SDL_WINDOWEVENT &&
                             event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                             client.command("release");
@@ -831,6 +848,9 @@ int main(int, char **) {
                         if(captureMenuInput){c.confirm=c.back=c.refresh=c.logout=c.up=c.down=c.help=c.stats=c.quality=c.keyboard=c.disconnect=false;c.mx=c.my=c.scroll=0;c.held=0;}
                         std::string draft;
                         if(liveUi.takeKeyboardEdit(draft)){
+#ifdef __SWITCH__
+                            rumble.stop();
+#endif
                             streamTouch.cancel(send);nativeTouch.cancel(send);phoneMouse.cancel(send);
                             client.command("release");
 #ifdef __SWITCH__
@@ -843,12 +863,24 @@ int main(int, char **) {
                         }
                         c.exit=false;
                     }
+#ifdef __SWITCH__
+                    const bool rumbleFocused=inputFocused && appletGetFocusState()==AppletFocusState_InFocus;
+                    const bool localRumbleAllowed=rumbleEnabled && rumbleFocused && !state.streaming && liveUi.atHome();
+                    const bool testRumble=localRumbleAllowed && (pressed&HidNpadButton_Y) &&
+                        (padGetButtons(&pad)&HidNpadButton_L) && (padGetButtons(&pad)&HidNpadButton_R);
+                    if(testRumble)c.refresh=false;
+                    rumble.update(pad,rumbleEnabled && rumbleFocused && running && state.streaming &&
+                        liveUi.gamepadMode() && !liveUi.active() && !captureMenuInput,testRumble,localRumbleAllowed);
+#endif
                     persistentNetwork=liveUi.networkOverlay;
                     if (c.exit)
                         running = false;
                     if (state.streaming) {
                         const bool captureNetworkInput=captureMenuInput;
                         if (c.disconnect) {
+#ifdef __SWITCH__
+                            rumble.stop();
+#endif
                             client.command("disconnect",{{"restoreSound",liveUi.restoreRemoteSoundOnDisconnect(state)},{"deviceId",state.activeDeviceId}});
                             continue;
                         }
@@ -1551,6 +1583,9 @@ int main(int, char **) {
                         syncMaxUs=pollMaxUs=pictureMaxUs=acceptMaxUs=drawMaxUs=presentMaxUs=cpuLedgerMaxUs=0;
                     }
                 }
+#ifdef __SWITCH__
+                rumble.stop();
+#endif
                 if (video)
                     uu::display::destroyTexture(video);
             }
