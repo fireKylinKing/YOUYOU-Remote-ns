@@ -1,0 +1,60 @@
+name: Switch build inputs
+
+on:
+  push:
+    branches: [codex/joycon-rumble]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  switch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch and verify pinned dependencies
+        run: |
+          python3 --version
+          python3 scripts/fetch_deps.py
+          python3 scripts/patch_deps.py
+      - name: Compile Switch application and shaders
+        run: |
+          # CMake requires this path during configuration. CI receives no
+          # authentication material; the empty file is never shipped.
+          : > romfs/signing.key
+          cmake -S . -B build-nx -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DUU_RESOURCE_MODE=FALLBACK \
+            -DUU_BUILD_LABEL=0.3.74-rumble \
+            -DUU_MEDIA_DISPATCH=ON -DUU_SRTP_MBEDTLS=ON \
+            -DUU_RECOVERY_FOCUS=OFF -DUU_SWITCH_BATCH_RX=OFF \
+            -DUU_RECEIVE_TIMESTAMPS=OFF -DUU_TWCC_FOUNDATION=OFF \
+            -DUU_TWCC_OBSERVE_CLIENT=OFF -DUU_TWCC_SEND_EXPERIMENT=OFF
+          cmake --build build-nx --target nro --parallel 4
+      - name: Export inputs for local NRO packaging
+        run: |
+          mkdir -p dist/switch-build
+          cp build-nx/UURemote-ns.elf build-nx/UURemote-ns.nacp dist/switch-build/
+          cp -R build-nx/romfs dist/switch-build/
+          rm dist/switch-build/romfs/signing.key
+          printf '%s\n' "$GITHUB_SHA" > dist/switch-build/SOURCE_COMMIT
+          aarch64_compiler="$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++"
+          "$aarch64_compiler" --version > dist/switch-build/TOOLCHAIN.txt
+          dkp-pacman -Q >> dist/switch-build/TOOLCHAIN.txt
+          # The CI NRO has an empty key and must never be deployed or uploaded.
+          test ! -e dist/switch-build/UURemote-ns.nro
+          test ! -e dist/switch-build/romfs/signing.key
+          (cd dist/switch-build && find . -type f -print0 | sort -z | xargs -0 sha256sum) > dist/SHA256SUMS
+          mv dist/SHA256SUMS dist/switch-build/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: switch-build-inputs
+          path: dist/switch-build/
+          if-no-files-found: error
+          retention-days: 7
