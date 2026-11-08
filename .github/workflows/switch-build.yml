@@ -27,12 +27,20 @@ jobs:
             -v "$GITHUB_WORKSPACE:/source" -w /source \
             devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282 \
             bash -se <<'BUILD'
+          apt-get update
+          apt-get install -y --no-install-recommends meson bison flex
+          meson setup .tools/dekotools external/dekotools --prefix=/source/.tools/gpu
+          meson compile -C .tools/dekotools -j 4
+          meson install -C .tools/dekotools
+          export PATH="/source/.tools/gpu/bin:$PATH"
+          make -C external/deko3d -j 4 lib/libdeko3d.a
           # CMake requires this path during configuration. CI receives no
           # authentication material; the empty file is never shipped.
           : > romfs/signing.key
           cmake -S . -B build-nx -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake \
             -DCMAKE_BUILD_TYPE=Release -DUU_RESOURCE_MODE=FALLBACK \
+            -DUU_DEKO3D_ROOT=/source/external/deko3d \
             -DUU_BUILD_LABEL=0.3.74-rumble \
             -DUU_MEDIA_DISPATCH=ON -DUU_SRTP_MBEDTLS=ON \
             -DUU_RECOVERY_FOCUS=OFF -DUU_SWITCH_BATCH_RX=OFF \
