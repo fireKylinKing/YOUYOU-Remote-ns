@@ -15,6 +15,8 @@ void ensureDefaultConfig() noexcept;
 // are retained. Frame pacing keeps the first parsed value (including 0 #comment).
 void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
                        int playoutDelay, int maxBitrateMbps, bool hevc);
+// Save a single global rumble preference, retaining all other config lines.
+void saveRumbleConfig(bool enabled);
 
 // Thread-safe read-only view of config.ini for all modules. Reload replaces the
 // map atomically; readers never observe a partially parsed file.

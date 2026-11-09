@@ -18,6 +18,7 @@
 
 namespace uu {
 namespace {
+std::mutex configWriteMutex;
 #ifdef __SWITCH__
 constexpr const char *kDirectory = "sdmc:/switch/UURemote-ns";
 constexpr const char *kPath = "sdmc:/switch/UURemote-ns/config.ini";
@@ -291,6 +292,7 @@ int ConfigStore::integer(const std::string &key,int fallback,int minimum,int max
 }
 void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
                        int playoutDelay, int maxBitrateMbps, bool hevc) {
+    std::lock_guard writeLock(configWriteMutex);
 #ifdef __SWITCH__
     const std::string path = "sdmc:/switch/UURemote-ns/config.ini";
 #else
@@ -348,6 +350,41 @@ void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
         }
         closedir(dir);
     }
+#endif
+    ConfigStore::instance().reload();
+}
+void saveRumbleConfig(bool enabled) {
+    std::lock_guard writeLock(configWriteMutex);
+#ifdef __SWITCH__
+    const std::string path="sdmc:/switch/UURemote-ns/config.ini";
+#else
+    const std::string path="config.ini";
+#endif
+    std::ifstream input(path);
+    const bool hadConfig=bool(input);
+    std::string line,content;
+    while(std::getline(input,line)) {
+        if(config::keyOf(line)!="rumble")content+=line+'\n';
+    }
+    if(input.bad())throw std::runtime_error("震动设置读取失败");
+    input.close();
+    content+=std::string("rumble=")+(enabled?"1\n":"0\n");
+    const auto temporary=path+".rumble-tmp",backup=path+".bak";
+    std::ofstream output(temporary,std::ios::trunc);
+    output<<content;output.close();
+    if(!output)throw std::runtime_error("震动设置保存失败");
+    if(hadConfig) {
+        std::remove(backup.c_str());
+        if(std::rename(path.c_str(),backup.c_str())!=0)
+            throw std::runtime_error("震动设置保存失败");
+    }
+    if(std::rename(temporary.c_str(),path.c_str())!=0) {
+        if(hadConfig)std::rename(backup.c_str(),path.c_str());
+        throw std::runtime_error("震动设置保存失败，已尝试恢复原配置");
+    }
+#ifdef __SWITCH__
+    if(R_FAILED(fsdevCommitDevice("sdmc")))
+        throw std::runtime_error("震动设置写入未确认，请重试");
 #endif
     ConfigStore::instance().reload();
 }

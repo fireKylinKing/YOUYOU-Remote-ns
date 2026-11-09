@@ -628,7 +628,6 @@ int main(int, char **) {
                 rumbleOptions.trace=rumbleConfig.integer("rumble_trace",1,0,1)!=0;
                 uu::SwitchRumble rumble(client.rumbleInbox(),rumbleOptions);
                 FocusHook focusHook(client,rumble);
-                const bool rumbleEnabled=uu::ConfigStore::instance().integer("rumble",1,0,1)!=0;
 #endif
                 bool running = true, overlay = false, wasStreaming = false,
                      statsVisible = false, persistentNetwork = false;
@@ -872,6 +871,7 @@ int main(int, char **) {
                     }
 #ifdef __SWITCH__
                     const bool rumbleFocused=inputFocused && appletGetFocusState()==AppletFocusState_InFocus;
+                    const bool rumbleEnabled=liveUi.rumbleEnabled();
                     const bool localRumbleAllowed=rumbleEnabled && rumbleFocused && !state.streaming && liveUi.atHome();
                     const bool testRumble=localRumbleAllowed && (pressed&HidNpadButton_Y) &&
                         (padGetButtons(&pad)&HidNpadButton_L) && (padGetButtons(&pad)&HidNpadButton_R);

@@ -8,6 +8,7 @@ class LiveFrontend {
     int selectedDevice=0,deviceOffset=0,touchTarget=-1,touchStartY=0,hit=-1,pointerX=0,pointerY=0;
     uu::DeviceSelection deviceSelection;
     bool vsync=true,sound=true,autoUnlock=false,autoLock=false,remoteMute=true,restoreSound=true;
+    bool vibrationEnabled=true;
     bool nativeMultitouch=true;Uint32 modeNoticeUntil=0;
     std::optional<int> lastPrivacyMode;
     bool keyboardEditRequested=false,sendingText=false,legacyQuality=false,customQuality=false;
@@ -263,6 +264,14 @@ class LiveFrontend {
         case 614:nativeMultitouch=true;client.command("release");resetTouchZoom=true;draining=true;save();break;
         case 612:resetTouchZoom=true;notice="画面缩放已重置";break;
         case 613:push(Page::XboxLayout);break;
+        case 615:
+            vibrationEnabled=!vibrationEnabled;
+            client.rumbleInbox()->disable();
+            uu::diagnostic(vibrationEnabled?"rumble-user-enabled":"rumble-user-disabled");
+            notice=vibrationEnabled?"手柄震动已开启":"手柄震动已关闭";
+            try {uu::saveRumbleConfig(vibrationEnabled);saveError.clear();}
+            catch(...) {saveError="震动开关本次已生效，但保存失败；重启后可能恢复旧设置";}
+            break;
         case 600:case 601:inputMode=a-600;client.command("release");draining=true;
             notice=inputMode?"实验手柄模式：请确认电脑游戏识别到控制器":"已切回键鼠映射";break;
         case 71:case 72:case 73:{
@@ -316,6 +325,7 @@ public:
     bool networkOverlay=false;
     bool restoreRemoteSoundOnDisconnect(const uu::Snapshot &s)const{return shouldRestoreRemoteSound(s);}
     explicit LiveFrontend(uu::Client &c,std::shared_ptr<uu::Media> m,SDL_Renderer *r):client(c),media(std::move(m)),renderer(r){
+        vibrationEnabled=uu::ConfigStore::instance().integer("rumble",1,0,1)!=0;
         uu::Json p;
         if(readPrefs(prefsPath,p) || readPrefs(std::string(prefsPath)+".previous",p)){
             networkOverlay=p.value("network_overlay",false);sound=p.value("sound",true);volume=std::clamp(p.value("volume",100),0,100);
@@ -347,6 +357,7 @@ public:
         modeNoticeUntil=SDL_GetTicks()+1800;
     }
     bool gamepadMode()const{return inputMode==1;}
+    bool rumbleEnabled()const{return vibrationEnabled;}
     bool xboxByLetter()const{return xboxLayout==1;}
     bool takeZoomReset(){const bool result=resetTouchZoom;resetTouchZoom=false;return result;}
     float pointerSpeed()const{const float speeds[]={.4f,.7f,1.f,1.4f};return speeds[mouseSpeed];}
@@ -527,12 +538,15 @@ public:
             }break;
         case Page::Playout:title="播放缓冲";{int values[]={0,8,16,24,35};for(int i=0;i<5;++i)row(i,std::to_string(values[i])+" ms",550+values[i],true,bufferMs==values[i]);}
             aligned(r,f.small,"缓冲越低越跟手；网络不稳时更易卡顿",{848,556,376,60},label);break;
-        case Page::Peripherals:title="外设";row(0,"手柄设备",13);row(1,"键盘输入",55);row(2,"触屏操作",54,true,false,nativeMultitouch?"平板多点触控":"手机鼠标指针");row(3,"鼠标设置",59);break;
+        case Page::Peripherals:title="外设";row(0,"手柄设备",13);row(1,"键盘输入",55);row(2,"触屏操作",54,true,false,nativeMultitouch?"平板多点触控":"手机鼠标指针");row(3,"鼠标设置",59);
+            add(848,480,376,64,"手柄震动",615,true,vibrationEnabled,"",Kind::Toggle);break;
         case Page::Gamepad:
             title="手柄设备";text(r,f.normal,"当前手柄",90,190,ink);
             rounded(r,{85,245,510,132},panel);image(r,"gamepad",{108,272,32,32});
             text(r,f.normal,"掌机内置手柄",160,264,ink);
             text(r,f.small,inputMode?"手柄直连模式":"键鼠映射模式",160,316,label);
+            add(85,414,510,72,"手柄震动",615,true,vibrationEnabled,"",Kind::Toggle);
+            aligned(r,f.small,"关闭后停止游戏震动和首页自检",{85,498,510,48},label);
             add(680,230,490,72,"输入模式",53,true,false,inputMode?"手柄直连":"键鼠映射",Kind::Menu);
             add(680,322,490,72,"键鼠映射方案",50,true,false,scheme==1?"方案一":"方案二",Kind::Menu);
             add(680,414,490,72,"操作说明",51,true,false,"",Kind::Menu);

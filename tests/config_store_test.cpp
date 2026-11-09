@@ -117,6 +117,24 @@ int main() {
         require(uu::ConfigStore::instance().integer("max_bitrate_mbps", 0, 0, 100) == 50, "custom cap survives reload");
         require(uu::ConfigStore::instance().integer("playout_delay_ms", 8, 0, 100) == 16, "playout delay survives reload");
 
+        writeFile(config,"config_version=3\nrumble=1 # old\nrumble=0\nrumble_strength=55\nrumble_trace=1\nwidth=1920\n# retained\nunknown_key=yes\n");
+        uu::saveRumbleConfig(false);
+        auto rumbleSaved=readFile(config);
+        require(occurrences(rumbleSaved,"rumble=")==1,"rumble save removes duplicate switches");
+        require(uu::ConfigStore::instance().integer("rumble",1,0,1)==0,"rumble off persists and reloads");
+        require(rumbleSaved.find("rumble_strength=55\n")!=std::string::npos && rumbleSaved.find("rumble_trace=1\n")!=std::string::npos,"rumble tuning retained");
+        require(rumbleSaved.find("width=1920\n")!=std::string::npos && rumbleSaved.find("# retained\nunknown_key=yes\n")!=std::string::npos,"rumble save retains other settings and comments");
+        uu::saveQualityConfig(1280,720,60,3,true,8,0,true);
+        require(uu::ConfigStore::instance().integer("rumble",1,0,1)==0,"quality save retains disabled rumble");
+        uu::saveRumbleConfig(true);
+        require(uu::ConfigStore::instance().integer("rumble",0,0,1)==1,"rumble on persists");
+        require(readFile(temp/"config.ini.bak").find("rumble=0")!=std::string::npos,"rumble save keeps fixed backup");
+        fs::create_directory(temp/"config.ini.rumble-tmp");
+        const auto beforeFailure=readFile(config);
+        bool failed=false;try{uu::saveRumbleConfig(false);}catch(const std::exception &){failed=true;}
+        require(failed && readFile(config)==beforeFailure,"failed rumble write preserves original");
+        fs::remove(temp/"config.ini.rumble-tmp");
+
         const std::vector<std::string> pacingLines{"frame_pacing=1 # on", "frame_pacing=0"};
         require(uu::config::framePacingFromLines(pacingLines) == "1", "save parser first wins");
         const std::vector<std::string> pacingComment{"frame_pacing=0 # off", "frame_pacing=1"};
