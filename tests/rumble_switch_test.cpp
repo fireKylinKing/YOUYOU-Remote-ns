@@ -24,6 +24,16 @@ bool isLast(float low,float high) {
     return !outputs.empty() && std::abs(outputs.back().value.amp_low-low)<.001f &&
         std::abs(outputs.back().value.amp_high-high)<.001f;
 }
+bool isPair(float leftLow,float leftHigh,float rightLow,float rightHigh) {
+    std::lock_guard lock(outputMutex);
+    if(outputs.size()<2)return false;
+    const auto &left=outputs[outputs.size()-2],&right=outputs.back();
+    return left.handle%10==0 && right.handle%10==1 &&
+        std::abs(left.value.amp_low-leftLow)<.001f && std::abs(left.value.amp_high-leftHigh)<.001f &&
+        std::abs(right.value.amp_low-rightLow)<.001f && std::abs(right.value.amp_high-rightHigh)<.001f &&
+        left.value.freq_low==160.f && left.value.freq_high==320.f &&
+        right.value.freq_low==160.f && right.value.freq_high==320.f;
+}
 bool sawTestSide(bool right) {
     std::lock_guard lock(outputMutex);
     for(auto &o:outputs)if((o.handle%10==(right?1u:0u)) && o.value.amp_low>0)return true;
@@ -89,6 +99,49 @@ int main() {
             check(initializedCount==1,"single Joy-Con handle count");
         }
         check(isLast(0,0),"destructor stop and join");
+        // Remapping must submit new device values even when the incoming
+        // strengths have not changed, and must clear the other band's output.
+        style=HidNpadStyleTag_NpadJoyDual;pad.handheld=false;pad.connected=true;
+        inbox=std::make_shared<RumbleInbox>();inbox->connect(2);
+        {
+            RumbleOptions options;options.smoothMs=0;
+            SwitchRumble output(inbox,options);
+            auto update=[&](RumbleMapping mapping,bool allowed=true){output.update(pad,allowed,false,false,mapping);};
+            update(RumbleMapping::Mixed);inbox->receive(2,{255,128},rumbleNow());
+            const float high=128.f/255*.6f;
+            waitFor([&]{return isPair(.75f,high,.75f,high);},"mixed sends both bands to both devices");
+            update(RumbleMapping::Split);
+            waitFor([&]{return isPair(.75f,0,0,high);},"live split remaps unchanged feedback and clears cross bands");
+            update(RumbleMapping::Mixed);
+            waitFor([&]{return isPair(.75f,high,.75f,high);},"live mixed remaps unchanged feedback");
+            update(RumbleMapping::Split);inbox->receive(2,{0,255},rumbleNow());
+            waitFor([&]{return isPair(0,0,0,.6f);},"high-only split vibrates right device");
+            inbox->receive(2,{255,0},rumbleNow());
+            waitFor([&]{return isPair(.75f,0,0,0);},"low-only split vibrates left device");
+            inbox->receive(2,{},rumbleNow());
+            waitFor([&]{return isPair(0,0,0,0);},"split zero stops both devices");
+            inbox->receive(2,{255,255},rumbleNow());
+            waitFor([&]{return isPair(.75f,0,0,.6f);},"split before disable");
+            update(RumbleMapping::Mixed,false);
+            waitFor([&]{return isPair(0,0,0,0);},"disabled remapping stays silent");
+            check(!inbox->receive(2,{255,255},rumbleNow()),"disabled feedback rejected");
+            update(RumbleMapping::Split);
+            check(inbox->sample(rumbleNow()).value==RumbleValue{},"reenable after mapping change does not replay old feedback");
+            for(auto controllerStyle:{HidNpadStyleTag_NpadHandheld,HidNpadStyleTag_NpadFullKey,HidNpadStyleTag_NpadJoyDual}) {
+                style=controllerStyle;pad.handheld=controllerStyle==HidNpadStyleTag_NpadHandheld;
+                update(RumbleMapping::Split);inbox->receive(2,{255,255},rumbleNow());
+                waitFor([&]{return isPair(.75f,0,0,.6f);},"split handheld/Pro/dual devices");
+            }
+            pad.handheld=false;
+            for(auto controllerStyle:{HidNpadStyleTag_NpadJoyLeft,HidNpadStyleTag_NpadJoyRight}) {
+                style=controllerStyle;update(RumbleMapping::Split);inbox->receive(2,{255,255},rumbleNow());
+                waitFor([&]{return initializedCount==1 && isLast(.75f,.6f);},"single Joy-Con retains both bands in split setting");
+            }
+            style=HidNpadStyleTag_NpadJoyDual;
+            output.update(pad,false,true,true,RumbleMapping::Split);
+            waitFor([&]{return isPair(96.f/255,96.f/255,0,0);},"local side test bypasses split mapping");
+            output.stop();waitFor([&]{return isPair(0,0,0,0);},"split self-test stop");
+        }
         std::cout<<"Switch rumble output lifecycle tests passed (simulated HID)\n";
     } catch(const std::exception &e){std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -42,6 +42,7 @@ constexpr const char *kFallbackTemplate =
     "video_codec=hevc\n"
     "native_display=1\n"
     "rumble=1\n"
+    "rumble_mapping=0\n"
     "rumble_strength=75\n"
     "rumble_low_gain=100\n"
     "rumble_high_gain=80\n"
@@ -353,7 +354,7 @@ void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
 #endif
     ConfigStore::instance().reload();
 }
-void saveRumbleConfig(bool enabled) {
+static void saveRumblePreference(const char *key,int value) {
     std::lock_guard writeLock(configWriteMutex);
 #ifdef __SWITCH__
     const std::string path="sdmc:/switch/UURemote-ns/config.ini";
@@ -364,11 +365,11 @@ void saveRumbleConfig(bool enabled) {
     const bool hadConfig=bool(input);
     std::string line,content;
     while(std::getline(input,line)) {
-        if(config::keyOf(line)!="rumble")content+=line+'\n';
+        if(config::keyOf(line)!=key)content+=line+'\n';
     }
     if(input.bad())throw std::runtime_error("震动设置读取失败");
     input.close();
-    content+=std::string("rumble=")+(enabled?"1\n":"0\n");
+    content+=std::string(key)+"="+std::to_string(value)+'\n';
     const auto temporary=path+".rumble-tmp",backup=path+".bak";
     std::ofstream output(temporary,std::ios::trunc);
     output<<content;output.close();
@@ -387,5 +388,10 @@ void saveRumbleConfig(bool enabled) {
         throw std::runtime_error("震动设置写入未确认，请重试");
 #endif
     ConfigStore::instance().reload();
+}
+void saveRumbleConfig(bool enabled) {saveRumblePreference("rumble",enabled?1:0);}
+void saveRumbleMappingConfig(int mapping) {
+    if(mapping<0 || mapping>1)throw std::invalid_argument("未知震动映射");
+    saveRumblePreference("rumble_mapping",mapping);
 }
 } // namespace uu

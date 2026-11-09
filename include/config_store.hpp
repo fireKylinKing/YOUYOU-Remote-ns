@@ -17,6 +17,7 @@ void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
                        int playoutDelay, int maxBitrateMbps, bool hevc);
 // Save a single global rumble preference, retaining all other config lines.
 void saveRumbleConfig(bool enabled);
+void saveRumbleMappingConfig(int mapping);
 
 // Thread-safe read-only view of config.ini for all modules. Reload replaces the
 // map atomically; readers never observe a partially parsed file.

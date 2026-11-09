@@ -134,6 +134,25 @@ int main() {
         bool failed=false;try{uu::saveRumbleConfig(false);}catch(const std::exception &){failed=true;}
         require(failed && readFile(config)==beforeFailure,"failed rumble write preserves original");
         fs::remove(temp/"config.ini.rumble-tmp");
+        writeFile(config,readFile(config)+"rumble_mapping=0 # old\nrumble_mapping=1\n");
+        uu::saveRumbleMappingConfig(1);
+        require(occurrences(readFile(config),"rumble_mapping=")==1,"mapping save canonicalizes duplicate keys");
+        require(uu::ConfigStore::instance().integer("rumble_mapping",0,0,1)==1,"split mapping persists and reloads");
+        uu::saveRumbleConfig(false);
+        require(uu::ConfigStore::instance().integer("rumble_mapping",0,0,1)==1,"rumble switch preserves split mapping");
+        uu::saveQualityConfig(1280,720,60,3,true,8,0,true);
+        require(uu::ConfigStore::instance().integer("rumble_mapping",0,0,1)==1,"quality save preserves split mapping");
+        uu::saveRumbleMappingConfig(0);
+        require(uu::ConfigStore::instance().integer("rumble_mapping",1,0,1)==0,"mixed mapping persists");
+        require(uu::ConfigStore::instance().integer("rumble",1,0,1)==0,"mapping save preserves rumble off");
+        require(uu::ConfigStore::instance().integer("rumble_strength",0,0,100)==55,"mapping save preserves tuning");
+        const auto beforeMappingFailure=readFile(config);
+        failed=false;try{uu::saveRumbleMappingConfig(2);}catch(const std::exception &){failed=true;}
+        require(failed && readFile(config)==beforeMappingFailure,"unknown mapping does not modify config");
+        fs::create_directory(temp/"config.ini.rumble-tmp");
+        failed=false;try{uu::saveRumbleMappingConfig(1);}catch(const std::exception &){failed=true;}
+        require(failed && readFile(config)==beforeMappingFailure,"failed mapping write preserves original");
+        fs::remove(temp/"config.ini.rumble-tmp");
 
         const std::vector<std::string> pacingLines{"frame_pacing=1 # on", "frame_pacing=0"};
         require(uu::config::framePacingFromLines(pacingLines) == "1", "save parser first wins");

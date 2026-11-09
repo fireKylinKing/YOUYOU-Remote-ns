@@ -877,7 +877,7 @@ int main(int, char **) {
                         (padGetButtons(&pad)&HidNpadButton_L) && (padGetButtons(&pad)&HidNpadButton_R);
                     if(testRumble)c.refresh=false;
                     rumble.update(pad,rumbleEnabled && rumbleFocused && running && state.streaming &&
-                        liveUi.gamepadMode() && !liveUi.active() && !captureMenuInput,testRumble,localRumbleAllowed);
+                        liveUi.gamepadMode() && !liveUi.active() && !captureMenuInput,testRumble,localRumbleAllowed,liveUi.rumbleMapping());
 #endif
                     persistentNetwork=liveUi.networkOverlay;
                     if (c.exit)

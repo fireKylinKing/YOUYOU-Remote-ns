@@ -18,7 +18,7 @@ void SwitchRumble::stop() {
     std::lock_guard lock(mutex_);
     testAt_=0;inbox_->disable();
 }
-void SwitchRumble::update(const PadState &pad,bool remoteAllowed,bool testRequested,bool localAllowed) {
+void SwitchRumble::update(const PadState &pad,bool remoteAllowed,bool testRequested,bool localAllowed,RumbleMapping mapping) {
     const auto now=rumbleNow();
     uint32_t id=padIsHandheld(&pad)?HidNpadIdType_Handheld:HidNpadIdType_No1;
     uint32_t style=padIsConnected(&pad)?hidGetNpadStyleSet(HidNpadIdType(id)):0;
@@ -27,6 +27,10 @@ void SwitchRumble::update(const PadState &pad,bool remoteAllowed,bool testReques
     style&=HidNpadStyleTag_NpadHandheld|HidNpadStyleTag_NpadJoyDual|
            HidNpadStyleTag_NpadJoyLeft|HidNpadStyleTag_NpadJoyRight|HidNpadStyleTag_NpadFullKey;
     std::lock_guard lock(mutex_);
+    if(mapping_!=mapping) {
+        mapping_=mapping;
+        diagnostic(mapping_==RumbleMapping::Split?"rumble-mapping-split":"rumble-mapping-mixed");
+    }
     if(id_!=id || style_!=style) {inbox_->disable();testAt_=0;id_=id;style_=style;}
     updatedAt_=now;
     inbox_->heartbeat(remoteAllowed && style!=0,now);
@@ -45,19 +49,19 @@ void SwitchRumble::run() {
     RumbleShaper shaper(options_);
     uint64_t previousAt=rumbleNow(),activeEpoch=0;
     unsigned previousSides=0;
+    bool previousSplit=false;
     if(options_.trace) {
         char line[192];
         std::snprintf(line,sizeof(line),"rumble-config strength_pct=%d low_pct=%d high_pct=%d smooth_ms=%d tick_ms=5",
             options_.strength,options_.lowGain,options_.highGain,options_.smoothMs);
         rumbleDiagnostic(line);
     }
-    auto send=[&](RumbleAmplitude value,unsigned sides) {
-        HidVibrationValue values[2]{};
+    auto send=[&](RumbleAmplitude value,unsigned sides,bool split,HidVibrationValue (&values)[2]) {
         for(int i=0;i<count;++i) {
             values[i].freq_low=160.f;values[i].freq_high=320.f;
             if(sides & (1u<<i)) {
-                values[i].amp_low=value.low;
-                values[i].amp_high=value.high;
+                values[i].amp_low=split && i==1?0.f:value.low;
+                values[i].amp_high=split && i==0?0.f:value.high;
             }
         }
         return hidSendVibrationValues(handles,values,count);
@@ -77,7 +81,7 @@ void SwitchRumble::run() {
         applied=false;previous={};previousSides=0;shaper.reset();
     };
     while(!quit_) {
-        char outputLine[256]{};
+        char outputLine[384]{};
         {
             // Serializes activation, local tests and output with stop().
             std::lock_guard lock(mutex_);
@@ -109,20 +113,29 @@ void SwitchRumble::run() {
             if(localTest) {
                 shaper.reset();amplitude={float(desired.low)/255.f,float(desired.high)/255.f};
             } else amplitude=shaper.advance(desired,elapsedMs);
-            if(ready && (amplitude.low!=previous.low || amplitude.high!=previous.high || sides!=previousSides)) {
+            // A lone Joy-Con receives both bands. Keep the diagnostic side test
+            // independent of the user's game mapping.
+            const bool split=mapping_==RumbleMapping::Split && count==2 && !localTest;
+            if(ready && (amplitude.low!=previous.low || amplitude.high!=previous.high || sides!=previousSides || split!=previousSplit)) {
                 // Set before sending so failure cleanup also attempts stop.
                 applied=true;
-                if(R_FAILED(send(amplitude,sides))) {
+                HidVibrationValue values[2]{};
+                if(R_FAILED(send(amplitude,sides,split,values))) {
                     stopOutput("send-failed");ready=false;inbox_->disable();
                     diagnostic("rumble-output-failed");
                 } else {
                     if(desired!=RumbleValue{} && previous.low==0 && previous.high==0)diagnostic("rumble-output-applied");
-                    previous=amplitude;previousSides=sides;
+                    previous=amplitude;previousSides=sides;previousSplit=split;
                     applied=desired!=RumbleValue{};
+                    const bool singleRight=count==1 && activeStyle==HidNpadStyleTag_NpadJoyRight;
                     if(options_.trace)std::snprintf(outputLine,sizeof(outputLine),
-                        "rumble-out t_ms=%llu raw_low=%u raw_high=%u out_low=%.4f out_high=%.4f sides=%u mode=%s",
+                        "rumble-out t_ms=%llu raw_low=%u raw_high=%u out_low=%.4f out_high=%.4f sides=%u mode=%s mapping=%s split=%d left_low=%.4f left_high=%.4f right_low=%.4f right_high=%.4f",
                         static_cast<unsigned long long>(now),unsigned(desired.low),unsigned(desired.high),
-                        double(amplitude.low),double(amplitude.high),sides,localTest?"test":"remote");
+                        double(amplitude.low),double(amplitude.high),sides,localTest?"test":"remote",
+                        mapping_==RumbleMapping::Split?"split":"mixed",split?1:0,
+                        singleRight?0.:double(values[0].amp_low),singleRight?0.:double(values[0].amp_high),
+                        count==2?double(values[1].amp_low):singleRight?double(values[0].amp_low):0.,
+                        count==2?double(values[1].amp_high):singleRight?double(values[0].amp_high):0.);
                 }
             }
         }

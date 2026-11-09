@@ -22,6 +22,7 @@ struct RumbleOptions {
     bool trace=true;
 };
 struct RumbleAmplitude { float low=0,high=0; };
+enum class RumbleMapping { Mixed=0, Split=1 };
 // Slew nonzero amplitudes; zero on either channel always stops that channel.
 class RumbleShaper {
     RumbleOptions options_;
