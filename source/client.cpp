@@ -505,6 +505,7 @@ Client::Client(std::string key, std::string client, std::shared_ptr<Media> media
     worker_ = std::thread([this] { run(); });
 }
 Client::~Client() {
+    rumble_->disconnect();
     stop_ = true;
     cancel_ = true;
     inbox_->cv.notify_all();
@@ -528,6 +529,7 @@ void Client::post(std::string type, Json data, uint64_t generation) {
     inbox_->cv.notify_one();
 }
 void Client::command(const std::string &name, Json data) {
+    if(name=="release" || name=="disconnect" || name=="logout" || name=="cancel")rumble_->disable();
     if (name == "disconnect" || name == "logout" || name == "cancel" || name == "sms-open" || name == "login")
         cancel_ = true;
     if (isPeerInputCommand(name)) {
@@ -1272,6 +1274,7 @@ void Client::handle(const Event &event) {
                 keyframeCountAtRequest_ = media_->keyframeCount();
                 diagnostic("rtc-keyframe-initial");
             }
+            rumble_->connect(generation_);
             setState("connected", "");
             {
                 std::lock_guard lock(inbox_->mutex);
@@ -1612,7 +1615,13 @@ void Client::beginPeer(const Json &result) {
     peer_->onLocalCandidate([post](rtc::Candidate c) {
         post("candidate", {{"candidate", std::string(c)}, {"sdpMid", c.mid()}, {"sdpMLineIndex", 0}});
     });
-    peer_->onStateChange([post](rtc::PeerConnection::State s) { post("peer-state", int(s)); });
+    std::weak_ptr<RumbleInbox> rumble=rumble_;
+    peer_->onStateChange([post,rumble,gen](rtc::PeerConnection::State s) {
+        if(s==rtc::PeerConnection::State::Failed || s==rtc::PeerConnection::State::Disconnected ||
+           s==rtc::PeerConnection::State::Closed)
+            if(auto feedback=rumble.lock())feedback->disconnect(gen);
+        post("peer-state", int(s));
+    });
     peer_->onIceStateChange([post](rtc::PeerConnection::IceState s) { post("ice-state", int(s)); });
     peer_->onGatheringStateChange(
         [post](rtc::PeerConnection::GatheringState s) { post("gathering-state", int(s)); });
@@ -1695,7 +1704,12 @@ void Client::beginPeer(const Json &result) {
                 }
             };
             channel->onOpen([stateChanged]{stateChanged(true);});
-            channel->onClosed([stateChanged]{stateChanged(false);});
+            std::weak_ptr<RumbleInbox> rumble=rumble_;
+            const bool controlChannel=std::string(label)=="CONTROL_DATA_CHANNEL";
+            channel->onClosed([stateChanged,rumble,generation,controlChannel]{
+                if(controlChannel)if(auto feedback=rumble.lock())feedback->disconnect(generation);
+                stateChanged(false);
+            });
         }
         {
             const bool acceptRpc=std::string(label)=="TEXT_DATA_CHANNEL" || std::string(label)=="FILE_DATA_CHANNEL";
@@ -1703,10 +1717,20 @@ void Client::beginPeer(const Json &result) {
             const std::string labelText=label;
             const bool traceChannel=labelText!="TEXT_DATA_CHANNEL" && labelText!="FILE_DATA_CHANNEL";
             std::weak_ptr<Inbox> inbox=inbox_;const auto generation=generation_;
-            channel->onMessage([inbox,generation,acceptRpc,streamerData,labelText,traceChannel](rtc::message_variant message) {
+            std::weak_ptr<RumbleInbox> rumble=rumble_;
+            auto rumbleLogged=std::make_shared<std::atomic<bool>>(false);
+            channel->onMessage([inbox,rumble,rumbleLogged,generation,acceptRpc,streamerData,labelText,traceChannel](rtc::message_variant message) {
                 const uint8_t *bytes=nullptr;size_t size=0;
                 if(auto *binary=std::get_if<rtc::binary>(&message)){bytes=reinterpret_cast<const uint8_t *>(binary->data());size=binary->size();}
                 else if(auto *text=std::get_if<std::string>(&message)){bytes=reinterpret_cast<const uint8_t *>(text->data());size=text->size();}
+                if(labelText=="CONTROL_DATA_CHANNEL") {
+                    if(auto value=parseRumble(bytes,size)) {
+                        if(auto feedback=rumble.lock())
+                            if(feedback->receive(generation,*value,rumbleNow()) && !rumbleLogged->exchange(true))
+                                diagnostic("rumble-feedback-received");
+                        return;
+                    }
+                }
                 const auto screens=parseScreenSources(bytes,size);
                 const auto settingSync=parseCaptureSettingSync(bytes,size);
                 const auto ack=acceptRpc?parseCaptureRpcAck(bytes,size):std::optional<CaptureRpcAck>{};
@@ -2032,6 +2056,7 @@ void Client::refreshFeedbackObservation() {
 }
 #endif
 void Client::disconnect() {
+    rumble_->disconnect();
     const auto disconnectStarted=monotonicMs();
     diagnostic("disconnect");
 

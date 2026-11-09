@@ -5,6 +5,7 @@
 ## 使用和项目状态
 
 - [使用手册](user-guide.md)：登录、设备、操作与画质设置。
+- [Joy-Con 游戏震动](joycon-rumble.md)：协议资料、本地自检、配置和真机验收。
 - [项目状态和已知限制](project-status.md)：已实现、待验证和暂停的功能。
 - [当前版本说明](releases/v0.3.74-beta.md)与[完整更新记录](../CHANGELOG.md)。
 

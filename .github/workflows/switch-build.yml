@@ -1,0 +1,73 @@
+name: Switch build inputs
+
+on:
+  push:
+    branches: [codex/joycon-rumble]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  switch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch and verify pinned dependencies
+        run: |
+          python3 --version
+          python3 scripts/fetch_deps.py
+          python3 scripts/patch_deps.py
+      - name: Compile Switch application and export local packaging inputs
+        run: |
+          docker run --rm -i --env GITHUB_SHA \
+            -v "$GITHUB_WORKSPACE:/source" -w /source \
+            devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282 \
+            bash -se <<'BUILD'
+          apt-get update
+          apt-get install -y --no-install-recommends meson bison flex
+          meson setup .tools/dekotools external/dekotools --prefix=/source/.tools/gpu
+          meson compile -C .tools/dekotools -j 4
+          meson install -C .tools/dekotools
+          export PATH="/source/.tools/gpu/bin:$PATH"
+          make -C external/deko3d -j 4 lib/libdeko3d.a
+          # CMake requires this path during configuration. CI receives no
+          # authentication material; the empty file is never shipped.
+          : > romfs/signing.key
+          cmake -S . -B build-nx -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DUU_RESOURCE_MODE=FALLBACK \
+            -DUU_DEKO3D_ROOT=/source/external/deko3d \
+            -DUU_BUILD_LABEL=0.3.77-rumble \
+            -DUU_MEDIA_DISPATCH=ON -DUU_SRTP_MBEDTLS=ON \
+            -DUU_RECOVERY_FOCUS=OFF -DUU_SWITCH_BATCH_RX=OFF \
+            -DUU_RECEIVE_TIMESTAMPS=OFF -DUU_TWCC_FOUNDATION=OFF \
+            -DUU_TWCC_OBSERVE_CLIENT=OFF -DUU_TWCC_SEND_EXPERIMENT=OFF
+          cmake --build build-nx --target nro --parallel 4
+          mkdir -p dist/switch-build
+          cp build-nx/UURemote-ns.elf build-nx/UURemote-ns.nacp dist/switch-build/
+          cp -R build-nx/romfs dist/switch-build/
+          rm dist/switch-build/romfs/signing.key
+          printf '%s\n' "$GITHUB_SHA" > dist/switch-build/SOURCE_COMMIT
+          "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++" --version > dist/switch-build/TOOLCHAIN.txt
+          dkp-pacman -Q >> dist/switch-build/TOOLCHAIN.txt
+          # The CI NRO has an empty key and must never be deployed or uploaded.
+          test ! -e dist/switch-build/UURemote-ns.nro
+          test ! -e dist/switch-build/romfs/signing.key
+          (cd dist/switch-build && find . -type f -print0 | sort -z | xargs -0 sha256sum) > dist/SHA256SUMS
+          mv dist/SHA256SUMS dist/switch-build/
+          BUILD
+      - name: Verify rumble shaping, lifecycle and asynchronous trace logging
+        run: |
+          cmake -S . -B build-core -G Ninja -DUU_CORE_ONLY=ON -DUU_BUILD_LABEL=0.3.77-rumble
+          cmake --build build-core --target rumble_test rumble_switch_test config_store_test diagnostics_log_test --parallel 4
+          ctest --test-dir build-core -R '^(gamepad_rumble.*|config_store|diagnostics_log.*)$' --output-on-failure
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: switch-build-inputs
+          path: dist/switch-build/
+          if-no-files-found: error
+          retention-days: 7

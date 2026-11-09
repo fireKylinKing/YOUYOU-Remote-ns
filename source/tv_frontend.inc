@@ -4,7 +4,7 @@ namespace tvui {
 constexpr SDL_Color bg{30,30,33,255}, panel{49,53,60,255}, blue{58,123,252,255},
     label{176,179,184,255}, ink{255,255,255,255};
 enum class Page {Home,Devices,Toolbar,Display,Quality,Picture,Peripherals,Gamepad,
-    Schemes,Guide,More,Network,Safety,Windows,Account,Login,Disconnect,Bitrate=18,Resolution,Codec,Touch,Keyboard,Stats,InputMode,Mouse,Audio,QualityPreset,Playout,Logout,About,WindowsConfirm,AppLaunch,StreamPreview,XboxLayout,DecodeProfile,ScreenProtection};
+    Schemes,Guide,More,Network,Safety,Windows,Account,Login,Disconnect,Bitrate=18,Resolution,Codec,Touch,Keyboard,Stats,InputMode,Mouse,Audio,QualityPreset,Playout,Logout,About,WindowsConfirm,AppLaunch,StreamPreview,XboxLayout,DecodeProfile,ScreenProtection,RumbleMapping};
 struct Frame {Page page; int focus=0;};
 enum class Kind {Button,Menu,Icon,Tile,Shortcut,Tab,Toggle};
 struct Button {SDL_Rect box; std::string title; int action; bool enabled=true; bool chosen=false;std::string value;Kind kind=Kind::Button;};

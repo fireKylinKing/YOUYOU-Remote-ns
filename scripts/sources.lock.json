@@ -61,5 +61,19 @@
     "ref": "2a3e2c5ea053c14b745dbdf41f609b1edc6a72fa",
     "sha256": "f5934ffcad4c32a95f9281f0f95908eb471ee34df721fb9d6ad4adb9567f6b61",
     "path": "mbedtls/framework"
+  },
+  {
+    "name": "deko3d",
+    "repo": "devkitPro/deko3d",
+    "ref": "373bfd43d8b2d805fa2eb7d406dbb823032df958",
+    "sha256": "90df01ca2349c87643d05a5a066825dfb56f30b27d1b5a44af4fbb9519f5e0ae",
+    "path": "deko3d"
+  },
+  {
+    "name": "dekotools",
+    "repo": "devkitPro/dekotools",
+    "ref": "c15523cea963c04fad77a46f23c3a96d26a86ab9",
+    "sha256": "bc2b67928377eb676704a0568f0ef17dc20b9846fd586f286dcd0aa507895f81",
+    "path": "dekotools"
   }
 ]

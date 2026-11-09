@@ -1,5 +1,6 @@
 #pragma once
 #include "auth.hpp"
+#include "rumble.hpp"
 #include "input_admission.hpp"
 #include "media.hpp"
 #include "quality_confirmation.hpp"
@@ -72,6 +73,7 @@ class Client {
     };
     std::shared_ptr<Inbox> inbox_ = std::make_shared<Inbox>();
     std::shared_ptr<Media> media_;
+    std::shared_ptr<RumbleInbox> rumble_=std::make_shared<RumbleInbox>();
     std::atomic<bool> stop_{false}, cancel_{false};
     std::thread worker_;
     std::mutex stateMutex_;
@@ -188,6 +190,7 @@ class Client {
     Client(std::string key, std::string client, std::shared_ptr<Media> media);
     ~Client();
     Snapshot snapshot();
+    std::shared_ptr<RumbleInbox> rumbleInbox() const { return rumble_; }
     void command(const std::string &name, Json data = nullptr);
     /// Latest network/media statistics for the on-screen network panel.
     StreamStatsSnapshot streamStats();

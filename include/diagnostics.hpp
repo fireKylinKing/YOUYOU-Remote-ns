@@ -3,6 +3,9 @@
 #include <string>
 namespace uu {
 void diagnostic(const char *event) noexcept;
+// Numeric rumble measurements only; separate bounded asynchronous log.
+void rumbleDiagnostic(const char *event) noexcept;
+bool flushRumbleLog() noexcept;
 // Waits until every line accepted before this call has been written or has
 // definitively failed/been dropped. Returns false for failure/drop, or when the
 // writer is unavailable; true is a write completion, not power-loss durability.

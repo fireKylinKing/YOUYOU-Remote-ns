@@ -60,7 +60,20 @@ int main(int argc, char **argv) {
         std::filesystem::create_directories(dir);
         std::filesystem::current_path(dir);
 
-        if (mode == "fflush") {
+        if (mode == "rumble") {
+            uu::rumbleDiagnostic("rumble-rx t_ms=100 seq=1 low=128 high=64 dt_ms=7 replaced=0");
+            require(uu::flushRumbleLog(), "rumble flush");
+            const auto trace=readAll("rumble.log");
+            require(trace.find("low=128 high=64 dt_ms=7")!=std::string::npos,"numeric rumble measurements");
+            require(!std::filesystem::exists("connection.log"),"rumble log isolation");
+            for(int i=0;i<3;++i) {
+                {std::ofstream grow("rumble.log",std::ios::trunc);grow<<std::string(1025*1024,'x');}
+                uu::rumbleDiagnostic("rumble-out out_low=0 out_high=0");
+                require(uu::flushRumbleLog(),"rumble rotation flush");
+            }
+            require(std::filesystem::exists("rumble.log.1") && std::filesystem::exists("rumble.log.2"),"bounded rumble rotations");
+            require(readAll("rumble.log").rfind("# build=test-build\n",0)==0,"rumble build label");
+        } else if (mode == "fflush") {
             failFlush = true;
             uu::diagnostic("fflush-failure");
             require(!uu::flushDiagnosticsLog(), "fflush failure must be visible");

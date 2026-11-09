@@ -18,6 +18,7 @@
 
 namespace uu {
 namespace {
+std::mutex configWriteMutex;
 #ifdef __SWITCH__
 constexpr const char *kDirectory = "sdmc:/switch/UURemote-ns";
 constexpr const char *kPath = "sdmc:/switch/UURemote-ns/config.ini";
@@ -39,7 +40,14 @@ constexpr const char *kFallbackTemplate =
     "playout_delay_ms=8\n"
     "max_bitrate_mbps=0\n"
     "video_codec=hevc\n"
-    "native_display=1\n";
+    "native_display=1\n"
+    "rumble=1\n"
+    "rumble_mapping=0\n"
+    "rumble_strength=75\n"
+    "rumble_low_gain=100\n"
+    "rumble_high_gain=80\n"
+    "rumble_smooth_ms=20\n"
+    "rumble_trace=1\n";
 
 std::string readFile(const std::string &path) {
     std::ifstream file(path, std::ios::binary);
@@ -285,6 +293,7 @@ int ConfigStore::integer(const std::string &key,int fallback,int minimum,int max
 }
 void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
                        int playoutDelay, int maxBitrateMbps, bool hevc) {
+    std::lock_guard writeLock(configWriteMutex);
 #ifdef __SWITCH__
     const std::string path = "sdmc:/switch/UURemote-ns/config.ini";
 #else
@@ -344,5 +353,45 @@ void saveQualityConfig(int width, int height, int fps, int quality, bool vsync,
     }
 #endif
     ConfigStore::instance().reload();
+}
+static void saveRumblePreference(const char *key,int value) {
+    std::lock_guard writeLock(configWriteMutex);
+#ifdef __SWITCH__
+    const std::string path="sdmc:/switch/UURemote-ns/config.ini";
+#else
+    const std::string path="config.ini";
+#endif
+    std::ifstream input(path);
+    const bool hadConfig=bool(input);
+    std::string line,content;
+    while(std::getline(input,line)) {
+        if(config::keyOf(line)!=key)content+=line+'\n';
+    }
+    if(input.bad())throw std::runtime_error("震动设置读取失败");
+    input.close();
+    content+=std::string(key)+"="+std::to_string(value)+'\n';
+    const auto temporary=path+".rumble-tmp",backup=path+".bak";
+    std::ofstream output(temporary,std::ios::trunc);
+    output<<content;output.close();
+    if(!output)throw std::runtime_error("震动设置保存失败");
+    if(hadConfig) {
+        std::remove(backup.c_str());
+        if(std::rename(path.c_str(),backup.c_str())!=0)
+            throw std::runtime_error("震动设置保存失败");
+    }
+    if(std::rename(temporary.c_str(),path.c_str())!=0) {
+        if(hadConfig)std::rename(backup.c_str(),path.c_str());
+        throw std::runtime_error("震动设置保存失败，已尝试恢复原配置");
+    }
+#ifdef __SWITCH__
+    if(R_FAILED(fsdevCommitDevice("sdmc")))
+        throw std::runtime_error("震动设置写入未确认，请重试");
+#endif
+    ConfigStore::instance().reload();
+}
+void saveRumbleConfig(bool enabled) {saveRumblePreference("rumble",enabled?1:0);}
+void saveRumbleMappingConfig(int mapping) {
+    if(mapping<0 || mapping>1)throw std::invalid_argument("未知震动映射");
+    saveRumblePreference("rumble_mapping",mapping);
 }
 } // namespace uu
